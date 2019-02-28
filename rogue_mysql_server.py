@@ -162,7 +162,7 @@ class http_request_handler(asynchat.async_chat):
                     '\x08',  # mysql.server_language
                     '\x02\x00',  # mysql.stat.ps_out_params
                     '\0' * 12,  # mysql.caps.unused + mysql.auth_plugin.length + mysql.unused
-                    ''.join(random.choice(lowercase) for _ in range(7)) + '\0',  # mysql.salt2 (9bytes)
+                    ''.join(random.choice(lowercase) for _ in range(9)) + '\0',  # mysql.salt2 (9bytes)
                 ))
             )
         )
